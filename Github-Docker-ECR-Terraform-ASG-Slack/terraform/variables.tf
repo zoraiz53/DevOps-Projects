@@ -18,7 +18,7 @@ variable "load_balancer_type" {
 variable "LB_security_group_id" {
     description = "LB_security_group_id"
     type = string
-    default = "sg-0b3b50bbf6e4aa21a"
+    default = "<SG_ID>"
 }
 
 variable "aws_lb_target_group_name" {
@@ -30,7 +30,7 @@ variable "aws_lb_target_group_name" {
 variable "vpc_id" {
     description = "vpc_id"
     type = string
-    default = "vpc-00f31f6ac6aa5d2e0"
+    default = "<VPC_ID>"
 }
 
 variable "health_check_path" {
@@ -66,31 +66,31 @@ variable "aws_asg_max_capacity" {
 variable "subnet_1" {
     description = "subnet_1"
     type = string
-    default = "subnet-0165ce8e4f70ff9fc"
+    default = "<SUBNET_1_ID>"
 }
 
 variable "subnet_2" {
     description = "subnet_2"
     type = string
-    default = "subnet-03f1b4574859f3560"
+    default = "SUBNET_2_ID"
 }
 
 variable "subnet_3" {
     description = "subnet_3"
     type = string
-    default = "subnet-0e42f3ca6359b367f"
+    default = "SUBNET_3_ID"
 }
 
 variable "subnet_4" {
     description = "subnet_4"
     type = string
-    default = "subnet-0f8622d0251cb32e9"
+    default = "SUBNET_3_ID"
 }
 
 variable "launch_template_id" {
     description = "launch_template_id"
     type = string
-    default = "lt-0e3121a72512146bd"
+    default = "<LAUNCH_TEMPLATE_ID>"
 }
 
 variable "asg_instance_name" {
@@ -140,13 +140,7 @@ variable "launch_template_name" {
 variable "launch_template_image_id" {
   description = "launch_template_image_id"
   type = string
-  default = "ami-020cba7c55df1f615"
-}
-
-variable "launch_template_image_id" {
-  description = "launch_template_image_id"
-  type = string
-  default = "ami-020cba7c55df1f615"
+  default = "ami-020cba7c55df1f615" #Ubuntu 24.04 ID
 }
 
 variable "launch_template_instance_type" {
