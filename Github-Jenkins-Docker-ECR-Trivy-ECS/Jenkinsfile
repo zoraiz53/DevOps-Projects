@@ -1,55 +1,98 @@
 pipeline {
     agent any
     environment {
-        AWS_ACCOUNT_ID = '084828598848'
-        AWS_REGION = 'us-east-1'
-        ECR_REPO = 'devops-project/github-jenkins-docker-trivy-ecs'
-        BACKEND_IMAGE_TAG = 'backend'
-        FRONTEND_IMAGE_TAG = 'frontend'
-        FRONTEND_IMAGE = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${FRONTEND_IMAGE_TAG}"
-        BACKEND_IMAGE = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${BACKEND_IMAGE_TAG}"
+        GIT_REPO_URL = 'https://github.com/zoraiz53/Github-Docker-ECR-Terraform-ASG-Slack.git'
+        GIT_BRANCH   = 'main'
+        IMAGE_NAME   = 'my-app-image'
+        AWS_REGION   = 'us-east-1'
+        AWS_ACCOUNT  = '084828598848'
+        ECR_REPO_URI = "${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_NAME}"
     }
+
     stages {
-        stage('Clone Repo') {
+        stage('git-pull')
             steps {
                 withCredentials([usernamePassword(credentialsId: 'github-creds', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PAT')]) {
-                    git url: "https://${GIT_USERNAME}:${GIT_PAT}@github.com/${GIT_USERNAME}/Github-Jenkins-Docker-ECR-Trivy-ECS", branch: 'main'
+                    git url: "https://${GIT_USERNAME}:${GIT_PAT}@github.com/${GIT_USERNAME}/Github-Docker-ECR-Terraform-ASG-Slack", branch: 'main'
+                }
+            }
+        stage('Clone Code from GitHub') {
+            steps {
+                git credentialsId: 'github-creds', url: "${GIT_REPO_URL}", branch: "${GIT_BRANCH}"
+                echo ':white_check_mark: Code pulled from GitHub.'
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh '''
+                    echo ":wrench: Building Docker image..."
+                    sudo docker build -t ${IMAGE_NAME}:latest .
+                '''
+                echo ':white_check_mark: Docker image built.'
+            }
+        }
+
+        stage('Push to AWS ECR') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'aws-ecr-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    sh '''
+                        echo ":key: Logging into AWS ECR..."
+                        export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                        export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                        export AWS_REGION=${AWS_REGION}
+
+                        aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin ${ECR_REPO_URI}
+
+                        echo ":label: Tagging Docker image..."
+                        sudo docker tag ${IMAGE_NAME}:latest ${ECR_REPO_URI}:latest
+
+                        echo ":rocket: Pushing Docker image to ECR..."
+                        sudo docker push ${ECR_REPO_URI}:latest
+                    '''
+                    echo ':white_check_mark: Docker image pushed to AWS ECR.'
                 }
             }
         }
-        stage('Build and Push Docker Images') {
+
+        stage('Deploy with Terraform') {
             steps {
-                withAWS(credentials: 'aws-creds', region: "${AWS_REGION}") {  // Uses the installed plugin
-                    script {
-                        // Log in to ECR (AWS CLI is provided by the plugin)
-                        sh """
-                            aws ecr get-login-password --region ${AWS_REGION} | \
-                            docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
-                        """
-                        // Build and push frontend
-                        dir('frontend') {
-                            sh "docker build -t ${FRONTEND_IMAGE} ."
-                            sh "docker push ${FRONTEND_IMAGE}"
-                        }
-                        // Build and push backend
-                        dir('backend') {
-                            sh "docker build -t ${BACKEND_IMAGE} ."
-                            sh "docker push ${BACKEND_IMAGE}"
-                        }
+                withCredentials([usernamePassword(credentialsId: 'aws-ecr-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    dir('/var/lib/jenkins/workspace/Github-Docker-ECR-Terraform-ASG-Slack/Terraform/aws-infra') {
+                        sh '''
+                            echo ":gear: Initializing Terraform..."
+                            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                            export AWS_DEFAULT_REGION=${AWS_REGION}
+                            
+                            terraform init
+
+                            echo ":satellite: Applying Terraform configuration..."
+                            terraform apply -auto-approve
+                        '''
+                        echo ':white_check_mark: Terraform infrastructure deployed.'
                     }
                 }
             }
         }
-        stage('Redeploy Backend ECS Service') {
+
+        stage('Slack Notification') {
             steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
-                    sh '''
-                        aws ecs update-service \
-                          --cluster Cluster-Fargate \
-                          --service Backend-Task-Definition-service-2ksfhy5a \
-                          --force-new-deployment
-                    '''
+                withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_WEBHOOK')]) {
+                    sh """
+                        curl -X POST -H 'Content-type: application/json' --data '{
+                          "text": ":rocket: *Deployment Successful!*\n• *Image:* ${IMAGE_NAME}\n• *Region:* ${AWS_REGION}\n• *ECR:* ${ECR_REPO_URI}"
+                        }' "\$SLACK_WEBHOOK"
+                    """
+                    echo ':bell: Slack notification sent.'
                 }
+            }
+        }
+        stage('LT Version Cleanup') {
+            steps {
+                sh '''
+                bash /var/lib/jenkins/script.sh
+                '''
             }
         }
     }
