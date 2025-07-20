@@ -1,0 +1,146 @@
+pipeline {
+    agent any
+
+    environment {
+        GIT_REPO_URL = '<GITHUB_REPO_CONTAINING_JENKINSFILE>'
+        IMAGE_NAME   = "<IMAGE_NAME>"
+        AWS_REGION   = "us-east-1"
+        AWS_ACCOUNT  = "<AWS_ACCOUNT_ID>"
+        ECR_REPO_URI = "${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_NAME}"
+    }
+
+    stages {
+        stage('Checkout Tagged Commit') {
+            steps {
+                script {
+                    def tag = sh(script: "git describe --tags --exact-match || echo ''", returnStdout: true).trim()
+
+                    if (!tag) {
+                        error("❌ No Git tag found pointing to this commit.")
+                    }
+
+                    env.GIT_TAG = tag
+                    env.TAG_VERSION = tag[-6..-1]
+
+                    checkout([$class: 'GitSCM',
+                        branches: [[name: "refs/tags/${tag}"]],
+                        userRemoteConfigs: [[
+                            url: "${GIT_REPO_URL}",
+                            credentialsId: 'github-creds'
+                        ]]
+                    ])
+
+                    echo "📌 Checked out Git tag: ${tag}"
+                    echo "🔖 Short tag version: ${env.TAG_VERSION}"
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh """
+                    echo ":wrench: Building Docker image..."
+                    sudo docker build --no-cache --pull -t ${ECR_REPO_URI}:${TAG_VERSION} .
+                """
+                echo ':white_check_mark: Docker image built.'
+            }
+        }
+
+        stage('Push to AWS ECR') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'aws-ecr-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    sh """
+                        echo ":key: Logging into AWS ECR..."
+                        export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+                        export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+                        export AWS_REGION=${AWS_REGION}
+
+                        aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO_URI}
+
+                        echo ":label: Tagging Docker image..."
+                        sudo docker tag ${ECR_REPO_URI}:${TAG_VERSION} ${ECR_REPO_URI}:${TAG_VERSION}
+
+                        echo ":rocket: Pushing Docker image to ECR..."
+                        sudo docker push ${ECR_REPO_URI}:${TAG_VERSION}
+                    """
+                    echo ":white_check_mark: Docker image pushed to AWS ECR with tag: ${TAG_VERSION}"
+                }
+            }
+
+            post {
+                always {
+                    cleanWs()
+                    echo "🧹 Cleaned workspace"
+                }
+                success {
+                    echo "✅ Build and push succeeded for tag: ${env.GIT_TAG}"
+                }
+                failure {
+                    echo "❌ Build or push failed for tag: ${env.GIT_TAG}"
+                }
+            }
+        }
+
+        stage('Check ECR Image Tag') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'aws-ecr-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    sh """
+                        echo ":mag: Checking if ECR image with tag ${TAG_VERSION} exists..."
+
+                        export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+                        export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+                        export AWS_REGION=${AWS_REGION}
+
+                        IMAGE_EXISTS=\$(aws ecr describe-images --repository-name ${IMAGE_NAME} --image-ids imageTag=${TAG_VERSION} --region ${AWS_REGION} 2>/dev/null || echo "NOT_FOUND")
+
+                        if echo "\$IMAGE_EXISTS" | grep -q "NOT_FOUND"; then
+                            echo "❌ Image with tag '${TAG_VERSION}' not found in ECR. Stopping pipeline."
+                            exit 1
+                        else
+                            echo "✅ Image with tag '${TAG_VERSION}' exists in ECR. Continuing..."
+                        fi
+                    """
+                }
+            }
+        }
+
+        stage('Update Image Tag in K8s Manifest') {
+            steps {
+                script {
+                    def imageBase = "<AWS_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/our-project"
+                    def manifestRepo = "https://github.com/zoraiz53/EKS-Argocd-hubspoke"
+                    def filePath = "manifests/guest-book/deployment.yml"
+                    def localRepo = "EKS-Argocd-hubspoke"
+
+                    withCredentials([usernamePassword(credentialsId: 'github-creds', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
+                        sh """
+                            echo ":inbox_tray: Cloning full repo..."
+                            git clone https://${GIT_USER}:${GIT_PASS}@github.com/zoraiz53/EKS-Argocd-hubspoke.git
+
+                            echo ":gear: Updating image tag in Kubernetes manifest..."
+                            sed -i 's|image: .*our-project:.*|image: '"${imageBase}:${TAG_VERSION}"'|g' ${localRepo}/${filePath}
+
+                            echo ":white_check_mark: Updated manifest file:"
+                            grep 'image:' ${localRepo}/${filePath}
+
+                            cd ${localRepo}
+
+                            echo ":floppy_disk: Committing changes..."
+                            git config user.name "Jenkins Bot"
+                            git config user.email "jenkins-bot@example.com"
+
+                            git add ${filePath}
+                            git commit -m "🔧 Updated image tag to ${TAG_VERSION}" || echo "No changes to commit."
+                            git push <GITHUB_REPO_FOR_K8s_MANIFESTS> HEAD:main
+                        """
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
+
+

@@ -1,0 +1,99 @@
+pipeline {
+    agent any
+    environment {
+        GIT_REPO_URL = 'https://github.com/zoraiz53/Github-Docker-ECR-Terraform-ASG-Slack.git'
+        GIT_BRANCH   = 'main'
+        IMAGE_NAME   = 'my-app-image'
+        AWS_REGION   = 'us-east-1'
+        AWS_ACCOUNT  = '084828598848'
+        ECR_REPO_URI = "${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_NAME}"
+    }
+
+    stages {
+        stage('git-pull')
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'github-creds', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PAT')]) {
+                    git url: "https://${GIT_USERNAME}:${GIT_PAT}@github.com/${GIT_USERNAME}/Github-Docker-ECR-Terraform-ASG-Slack", branch: 'main'
+                }
+            }
+        stage('Clone Code from GitHub') {
+            steps {
+                git credentialsId: 'github-creds', url: "${GIT_REPO_URL}", branch: "${GIT_BRANCH}"
+                echo ':white_check_mark: Code pulled from GitHub.'
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh '''
+                    echo ":wrench: Building Docker image..."
+                    sudo docker build -t ${IMAGE_NAME}:latest .
+                '''
+                echo ':white_check_mark: Docker image built.'
+            }
+        }
+
+        stage('Push to AWS ECR') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'aws-ecr-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    sh '''
+                        echo ":key: Logging into AWS ECR..."
+                        export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                        export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                        export AWS_REGION=${AWS_REGION}
+
+                        aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin ${ECR_REPO_URI}
+
+                        echo ":label: Tagging Docker image..."
+                        sudo docker tag ${IMAGE_NAME}:latest ${ECR_REPO_URI}:latest
+
+                        echo ":rocket: Pushing Docker image to ECR..."
+                        sudo docker push ${ECR_REPO_URI}:latest
+                    '''
+                    echo ':white_check_mark: Docker image pushed to AWS ECR.'
+                }
+            }
+        }
+
+        stage('Deploy with Terraform') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'aws-ecr-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    dir('/var/lib/jenkins/workspace/Github-Docker-ECR-Terraform-ASG-Slack/Terraform/aws-infra') {
+                        sh '''
+                            echo ":gear: Initializing Terraform..."
+                            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                            export AWS_DEFAULT_REGION=${AWS_REGION}
+                            
+                            terraform init
+
+                            echo ":satellite: Applying Terraform configuration..."
+                            terraform apply -auto-approve
+                        '''
+                        echo ':white_check_mark: Terraform infrastructure deployed.'
+                    }
+                }
+            }
+        }
+
+        stage('Slack Notification') {
+            steps {
+                withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_WEBHOOK')]) {
+                    sh """
+                        curl -X POST -H 'Content-type: application/json' --data '{
+                          "text": ":rocket: *Deployment Successful!*\n• *Image:* ${IMAGE_NAME}\n• *Region:* ${AWS_REGION}\n• *ECR:* ${ECR_REPO_URI}"
+                        }' "\$SLACK_WEBHOOK"
+                    """
+                    echo ':bell: Slack notification sent.'
+                }
+            }
+        }
+        stage('LT Version Cleanup') {
+            steps {
+                sh '''
+                bash /var/lib/jenkins/script.sh
+                '''
+            }
+        }
+    }
+}
