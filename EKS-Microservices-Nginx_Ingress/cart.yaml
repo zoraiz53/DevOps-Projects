@@ -1,0 +1,66 @@
+### This Kubernets Manifest is All About The CART MicroService ###
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cart
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app-cart-deployment
+  namespace: cart
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: my-app
+      tier: cart
+  template:
+    metadata:
+      labels:
+        app: my-app
+        tier: cart
+    spec:
+      containers:
+      - name: my-app-cart-container
+        image: <CART-IMAGE-NAME>
+        ports:
+        - containerPort: 80
+      imagePullSecrets:
+      - name: ecr-registry-credentials
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-cart-service
+  namespace: cart
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80 
+      targetPort: 80 # The Port Exposed in the Image
+  selector:
+    app: my-app
+    tier: cart
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cart-ingress
+  namespace: cart
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /cart     # The Path for the Cart Service
+        pathType: Prefix
+        backend:
+          service:
+            name: my-cart-service     # Cart Service Name
+            port:
+              number: 80
