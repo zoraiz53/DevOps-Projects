@@ -1,0 +1,45 @@
+# Sample config for Prometheus.
+
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+
+  external_labels:
+      monitor: 'example'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+  - static_configs:
+    - targets: ['localhost:9093']
+
+# Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+# Scrape configuration
+scrape_configs:
+  - job_name: 'prometheus'
+    scrape_interval: 5s
+    scrape_timeout: 5s
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'node'
+    static_configs:
+      - targets: ['localhost:9100']
+
+  - job_name: 'node_exporter_asg'
+    ec2_sd_configs:
+      - region: us-east-1   # 👈 Change to your AWS region (e.g., ap-south-1, eu-west-1)
+        port: 9100
+        filters:
+          - name: "tag:Monitoring"
+            values: ["enabled"]
+    relabel_configs:
+      - source_labels: [__meta_ec2_private_ip]
+        target_label: __address__
+        regex: (.*)
+        replacement: ${1}:9100
+
