@@ -34,7 +34,7 @@ resource "azurerm_network_security_group" "public_nsg" {
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_ranges    = ["22"]
-    source_address_prefix      = "*"
+    source_address_prefix      = "<Your-Public-IP-Address>/32" # Replace with your public IP address
     destination_address_prefix = "*"
   }
 }
